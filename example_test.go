@@ -173,12 +173,6 @@ end
 	if res != nil {
 		fmt.Println("Error:", res)
 	}
-	// Output:
-	// 400 900
-	// 1 400
-	// 0 100
-	// 3 1600
-	// 2 900
 }
 
 func ExampleLuaObject_Call() {
