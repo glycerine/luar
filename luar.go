@@ -155,21 +155,33 @@ func Init() *lua.State {
 	L.OpenLibs()
 	Register(L, "luar", Map{
 		// Functions.
-		"unproxify": Unproxify,
+		"__luar_unproxify": Unproxify,
 
-		"method": ProxyMethod,
+		"__luar_method": ProxyMethod,
 
-		"chan":    MakeChan,
-		"complex": Complex,
-		"map":     MakeMap,
-		"slice":   MakeSlice,
+		"__luar_chan":           MakeChan,
+		"__luar_complex_number": Complex,
+		"__luar_map":            MakeMap,
+		"__luar_slice":          MakeSlice,
 
 		// Values.
-		"null": Null,
+		"__luar_null": Null,
 	})
+
+	// make backups;
+	L.GetGlobal("pairs")
+	L.SetGlobal("__pairs_original")
+	L.GetGlobal("ipairs")
+	L.SetGlobal("__ipairs_original")
+
+	// Ugh. the ipairs and pairs proxies
+	// crash under non-main coroutines. Turn them off for now.
 	Register(L, "", Map{
 		"pairs": ProxyPairs,
-		"type":  ProxyType,
+		// jea: Using ProxyType is huge 10x performance loss for LuaJIT.
+		// So try not to use it. A developer on the project
+		// reports that it is entirely cosmetic anyhow.
+		//"type": ProxyType,
 	})
 	// 'ipairs' needs a special case for performance reasons.
 	RegProxyIpairs(L, "", "ipairs")
@@ -685,7 +697,15 @@ func copyTableToSlice(L *lua.State, idx int, v reflect.Value, visited map[uintpt
 		// yes, is __gi_Slice
 		// leave the props on the top of the stack, we'll use
 		// them immediately.
-		return copyGiTableToSlice(L, adj, v, visited, isSlice)
+		status = copyGiTableToSlice(L, adj, v, visited, isSlice)
+		if status == nil {
+			return status
+		}
+		pp("copyGiTableToSlice saw error, going back to non-gi path. lua stack is now:")
+		if verb.VerboseVerbose {
+			DumpLuaStack(L)
+		}
+		status = nil
 	} else {
 		L.Pop(1)
 	}
@@ -919,6 +939,7 @@ func expandLazyEllipsis(L *lua.State, idx int) (expandCount int, err error) {
 	}
 	nm := L.ToString(-1)
 	if nm != "__lazy_ellipsis_instance" {
+		L.Pop(1)
 		return 0, nil
 	}
 	L.Pop(1)
@@ -963,7 +984,7 @@ func expandLazyEllipsis(L *lua.State, idx int) (expandCount int, err error) {
 		fmt.Printf("lazy ellipsis: early exit, could not get length of object on top of stack\n")
 		return -1, err
 	}
-	// 88888888888888888
+
 	fmt.Printf("lazy elip: back safe from getting n=%v\n", n)
 	if n <= 0 {
 		// empty? just clear ourselves off the stack
@@ -1018,6 +1039,48 @@ func expandLazyEllipsis(L *lua.State, idx int) (expandCount int, err error) {
 	return n, nil
 }
 
+// if we find a pointer-to-struct at idx, we dereference
+// it, replacing the pointer by the struct table at idx.
+func dereferenceGijitStructPointerToStruct(L *lua.State, idx int) {
+
+	if idx == 0 {
+		return
+	}
+	if L.Type(idx) != lua.LUA_TTABLE {
+		return
+	}
+
+	getfield(L, idx, "__name")
+	if L.IsNil(-1) {
+		L.Pop(1)
+		return
+	}
+
+	nm := L.ToString(-1)
+	if nm != "__pointerToStructValue" {
+		L.Pop(1)
+		return
+	}
+	L.Pop(1)
+
+	getfield(L, -1, "__val")
+	if L.IsNil(-1) {
+		L.Pop(1)
+		return
+	}
+
+	pp("-- dereferenceGijitStructPointerToStruct, after getting __val to top, here is stack:")
+	if verb.VerboseVerbose {
+		DumpLuaStack(L)
+	}
+	L.Replace(idx)
+
+	pp("-- dereferenceGijitStructPointerToStruct, after Replace(idx), here is stack:")
+	if verb.VerboseVerbose {
+		DumpLuaStack(L)
+	}
+}
+
 func luaToGo(L *lua.State, idx int, v reflect.Value, visited map[uintptr]reflect.Value) (xtraExpandedCount int, err error) {
 
 	pp("-- top of luaToGo, here is stack:")
@@ -1030,6 +1093,11 @@ func luaToGo(L *lua.State, idx int, v reflect.Value, visited map[uintptr]reflect
 		return 0, err
 	}
 
+	pp("-- in luaToGo, after expandLazyEllipsis(), here is stack:")
+	if verb.VerboseVerbose {
+		DumpLuaStack(L)
+	}
+
 	if expandCount > 0 {
 		xtraExpandedCount = expandCount - 1
 	}
@@ -1037,6 +1105,21 @@ func luaToGo(L *lua.State, idx int, v reflect.Value, visited map[uintptr]reflect
 		pp("expandCount from lazy ellipsis was %v; stack:\n%s\n", expandCount, string(debug.Stack()))
 
 	}
+
+	// dereference pointers-to-gijit-structs into gijit-structs.
+	top := L.GetTop()
+	chk := 1 // always check at least the top of stack.
+	if expandCount > 0 {
+		chk = expandCount // check all expanded ellipsis arguments.
+	}
+	for i := 0; i < chk; i++ {
+		dereferenceGijitStructPointerToStruct(L, top-i)
+		pp("-- in luaToGo, after dereferenceGijitStructPointerToStruct(L, %v), here is stack:", top-i)
+		if verb.VerboseVerbose {
+			DumpLuaStack(L)
+		}
+	}
+
 	// Derefence 'v' until a non-pointer.
 	// This initializes the values, which will be useless effort if the conversion
 	// fails.
@@ -1450,8 +1533,10 @@ func dumpTableString(L *lua.State, index int) (s string) {
 	return
 }
 
-func giSliceGetRawHelper(L *lua.State, idx int, v reflect.Value, visited map[uintptr]reflect.Value) (n int, offset int, t reflect.Type) {
+func giSliceGetRawHelper(L *lua.State, idx int, v reflect.Value, visited map[uintptr]reflect.Value) (n int, offset int, t reflect.Type, err error) {
 	pp("top of giSliceGetRawHelper. idx=%v, here is stack:", idx)
+	pp("stack:\n%s\n", string(debug.Stack()))
+
 	if verb.VerboseVerbose {
 		DumpLuaStack(L)
 	}
@@ -1461,11 +1546,13 @@ func giSliceGetRawHelper(L *lua.State, idx int, v reflect.Value, visited map[uin
 	// __length
 	getfield(L, idx, "__length")
 	if L.IsNil(-1) {
-		panic("what? should be a `__length` member of a gijit slice")
+		pp("yikes. __length not found, returning an error.")
+		L.Pop(1)
+		return 0, 0, nil, fmt.Errorf("what? should be a `__length` member of a gijit slice")
 	}
 	n = int(L.ToNumber(-1))
 	L.Pop(1)
-	pp("copyGiTableToSlice after getting __length=%v, stack is:", n)
+	pp("giSliceGetRawHelper after getting __length=%v, stack is:", n)
 	if verb.VerboseVerbose {
 		DumpLuaStack(L)
 	}
@@ -1477,7 +1564,7 @@ func giSliceGetRawHelper(L *lua.State, idx int, v reflect.Value, visited map[uin
 	}
 	offset = int(L.ToNumber(-1))
 	L.Pop(1)
-	pp("copyGiTableToSlice after getting __offset=%v, stack is:", offset)
+	pp("giSliceGetRawHelper after getting __offset=%v, stack is:", offset)
 	if verb.VerboseVerbose {
 		DumpLuaStack(L)
 	}
@@ -1539,7 +1626,7 @@ func giSliceGetRawHelper(L *lua.State, idx int, v reflect.Value, visited map[uin
 		DumpLuaStack(L)
 	}
 
-	return n, offset, t
+	return n, offset, t, nil
 }
 
 // props is on top of stack. The actual table at idx, which props describes.
@@ -1550,7 +1637,10 @@ func copyGiTableToSlice(L *lua.State, idx int, v reflect.Value, visited map[uint
 	}
 
 	// extract out the raw underlying table
-	n, offset, t := giSliceGetRawHelper(L, idx, v, visited)
+	n, offset, t, err := giSliceGetRawHelper(L, idx, v, visited)
+	if err != nil {
+		return err
+	}
 
 	pp("in copyGiTableToSlice, n='%v', t='%v', offset='%v'", n, t, offset)
 
