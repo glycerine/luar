@@ -1,6 +1,7 @@
 package luar
 
 import (
+	"fmt"
 	"reflect"
 	"runtime"
 	"sort"
@@ -108,6 +109,7 @@ end
 `
 
 func mustDoString(t *testing.T, L *lua.State, code string) {
+	fmt.Printf("mustDoString() top. code='%s'. L=%p\n", code, L)
 	err := L.DoString(code)
 	if err != nil {
 		t.Fatal(err)
@@ -155,7 +157,7 @@ func runGoTest(t *testing.T, L *lua.State, tdt []goTestData) {
 	for _, test := range tdt {
 		mustDoString(t, L, `return `+test.input)
 		got := reflect.New(reflect.TypeOf(test.want))
-		err := LuaToGo(L, -1, got.Interface())
+		_, err := LuaToGo(L, -1, got.Interface())
 		L.Pop(1)
 		checkStack(t, L)
 		if test.err == "" && err != nil {
@@ -184,7 +186,7 @@ func TestArray(t *testing.T) {
 	a := [2]int{17, 18}
 	Register(L, "", Map{"a": a})
 
-	runLuaTest(t, L, []luaTestData{{`a`, `{17, 18}`}})
+	runLuaTest(t, L, []luaTestData{{`a`, `{17LL, 18LL}`}})
 
 	// Conversion from sub-type should fail.
 	runGoTest(t, L, []goTestData{{`a`, new([2]string), ErrTableConv.Error()}})
@@ -411,7 +413,7 @@ func TestCycleLuaToGo(t *testing.T) {
 		var output []interface{}
 		L.DoString(`t = {17}; v = {t}; t[2] = v`)
 		L.GetGlobal("t")
-		err := LuaToGo(L, -1, &output)
+		_, err := LuaToGo(L, -1, &output)
 		L.Pop(1)
 		if err != nil {
 			t.Error(err)
@@ -427,7 +429,7 @@ func TestCycleLuaToGo(t *testing.T) {
 		var output []interface{}
 		L.DoString(`t = {17}; v = {t, t}; t[2] = v; t[3] = v; t[4] = t`)
 		L.GetGlobal("t")
-		err := LuaToGo(L, -1, &output)
+		_, err := LuaToGo(L, -1, &output)
 		L.Pop(1)
 		if err != nil {
 			t.Error(err)
@@ -443,7 +445,7 @@ func TestCycleLuaToGo(t *testing.T) {
 		var output map[string]interface{}
 		L.DoString(`t = {foo=17}; t["bar"] = t`)
 		L.GetGlobal("t")
-		err := LuaToGo(L, -1, &output)
+		_, err := LuaToGo(L, -1, &output)
 		L.Pop(1)
 		if err != nil {
 			t.Error(err)
@@ -459,7 +461,7 @@ func TestCycleLuaToGo(t *testing.T) {
 		var output map[string]interface{}
 		L.DoString(`t = {foo=17}; v = {baz=t}; t["bar"] = v`)
 		L.GetGlobal("t")
-		err := LuaToGo(L, -1, &output)
+		_, err := LuaToGo(L, -1, &output)
 		L.Pop(1)
 		if err != nil {
 			t.Error(err)
@@ -476,7 +478,7 @@ func TestCycleLuaToGo(t *testing.T) {
 		L.DoString(`t = {V=17}; t.Next = t`)
 		L.GetGlobal("t")
 		var output *list
-		err := LuaToGo(L, -1, &output)
+		_, err := LuaToGo(L, -1, &output)
 		L.Pop(1)
 		if err != nil {
 			t.Error(err)
@@ -490,7 +492,7 @@ func TestCycleLuaToGo(t *testing.T) {
 		L.DoString(`t1 = {V=17}; t2 = {V=18, Next=t1}; t1.Next=t2`)
 		L.GetGlobal("t1")
 		var output = list{}
-		err := LuaToGo(L, -1, &output)
+		_, err := LuaToGo(L, -1, &output)
 		if err != nil {
 			t.Error(err)
 		}
@@ -900,7 +902,7 @@ func TestLuaObjectIter(t *testing.T) {
 
 	wantValues := map[string]float64{"foo": 10, "bar": 20}
 	if !reflect.DeepEqual(values, wantValues) {
-		t.Errorf("got %q, want %q", keys, wantValues)
+		t.Errorf("got %#v, want %#v", keys, wantValues)
 	}
 
 	checkStack(t, L)
@@ -946,7 +948,7 @@ func TestLuaObjectIterMT(t *testing.T) {
 
 	wantValues := map[string]float64{"foo": 10, "bar": 20}
 	if !reflect.DeepEqual(values, wantValues) {
-		t.Errorf("got %q, want %q", keys, wantValues)
+		t.Errorf("got %#v, want %#v", keys, wantValues)
 	}
 
 	checkStack(t, L)
@@ -964,7 +966,7 @@ end
 
 	var a interface{}
 	L.GetGlobal("foo")
-	err := LuaToGo(L, -1, &a)
+	_, err := LuaToGo(L, -1, &a)
 	if err != nil {
 		t.Error(err)
 	}
@@ -979,7 +981,7 @@ end
 	}
 
 	lo2 := NewLuaObjectFromName(L, "_G")
-	err = LuaToGo(L, -1, &lo2)
+	_, err = LuaToGo(L, -1, &lo2)
 	if err != nil {
 		t.Error(err)
 	}
@@ -1011,28 +1013,28 @@ func TestLuaToGoPointers(t *testing.T) {
 	}
 
 	// nil pointer
-	err = LuaToGo(L, -1, nil)
+	_, err = LuaToGo(L, -1, nil)
 	printError("not a pointer")
 
 	// pointer to nil
 	var ip *int
-	err = LuaToGo(L, -1, ip)
+	_, err = LuaToGo(L, -1, ip)
 	printError("nil pointer")
 
 	// pointer to zero
 	var i int
 	ip = &i
-	err = LuaToGo(L, -1, ip)
+	_, err = LuaToGo(L, -1, ip)
 	printError("")
 
 	// pointer to pointer to nil
 	var ipp **int
-	err = LuaToGo(L, -1, ipp)
+	_, err = LuaToGo(L, -1, ipp)
 	printError("nil pointer")
 
 	// pointer to pointer to zero
 	ipp = &ip
-	err = LuaToGo(L, -1, ipp)
+	_, err = LuaToGo(L, -1, ipp)
 	printError("")
 
 	L.Pop(1)
@@ -1080,7 +1082,7 @@ func TestMap(t *testing.T) {
 		"quux": 19,
 	}
 
-	err := LuaToGo(L, -1, &got)
+	_, err := LuaToGo(L, -1, &got)
 	if err != ErrTableConv {
 		t.Errorf("wrong error %q, want %q", err, ErrTableConv)
 	}
@@ -1093,7 +1095,7 @@ func TestMap(t *testing.T) {
 		"foo": 170,
 		"qux": 18,
 	}
-	err = LuaToGo(L, -1, &got)
+	_, err = LuaToGo(L, -1, &got)
 	if err != ErrTableConv {
 		t.Errorf("wrong error %q, want %q", err, ErrTableConv)
 	}
@@ -1107,7 +1109,7 @@ func TestMap(t *testing.T) {
 		"bar": "baz",
 		"qux": 18.0,
 	}
-	err = LuaToGo(L, -1, &i)
+	_, err = LuaToGo(L, -1, &i)
 	if err != ErrTableConv {
 		t.Errorf("wrong error %q, want %q", err, ErrTableConv)
 	}
@@ -1125,7 +1127,7 @@ func TestMap(t *testing.T) {
 		"qux":  18.0,
 		"quux": 19.0,
 	}
-	err = LuaToGo(L, -1, &i)
+	_, err = LuaToGo(L, -1, &i)
 	if err != ErrTableConv {
 		t.Errorf("wrong error %q, want %q", err, ErrTableConv)
 	}
@@ -1172,7 +1174,7 @@ func TestProxy(t *testing.T) {
 	var i interface{}
 	want := myIntA(17)
 
-	err := LuaToGo(L, -1, &i)
+	_, err := LuaToGo(L, -1, &i)
 	if err != nil {
 		t.Error(err)
 	}
@@ -1181,7 +1183,7 @@ func TestProxy(t *testing.T) {
 	}
 
 	i = "foo"
-	err = LuaToGo(L, -1, &i)
+	_, err = LuaToGo(L, -1, &i)
 	if err != nil {
 		t.Error(err)
 	}
@@ -1589,7 +1591,7 @@ func TestScalar(t *testing.T) {
 	var i interface{}
 
 	L.PushNil()
-	err := LuaToGo(L, -1, &i)
+	_, err := LuaToGo(L, -1, &i)
 	L.Pop(1)
 	if err != nil {
 		t.Error(err)
@@ -1599,7 +1601,7 @@ func TestScalar(t *testing.T) {
 	}
 
 	L.PushBoolean(true)
-	err = LuaToGo(L, -1, &i)
+	_, err = LuaToGo(L, -1, &i)
 	L.Pop(1)
 	if err != nil {
 		t.Error(err)
@@ -1612,7 +1614,7 @@ func TestScalar(t *testing.T) {
 	}
 
 	L.PushNumber(17)
-	err = LuaToGo(L, -1, &i)
+	_, err = LuaToGo(L, -1, &i)
 	L.Pop(1)
 	if err != nil {
 		t.Error(err)
@@ -1641,7 +1643,7 @@ func TestSlice(t *testing.T) {
 	mustDoString(t, L, `return `+input)
 
 	got := []string{"tooshort"}
-	err := LuaToGo(L, -1, &got)
+	_, err := LuaToGo(L, -1, &got)
 	if err != nil {
 		t.Error(err)
 	}
@@ -1650,7 +1652,7 @@ func TestSlice(t *testing.T) {
 	}
 
 	got = []string{"more", "than", "three", "elements"}
-	err = LuaToGo(L, -1, &got)
+	_, err = LuaToGo(L, -1, &got)
 	if err != nil {
 		t.Error(nil)
 	}
@@ -1659,7 +1661,7 @@ func TestSlice(t *testing.T) {
 	}
 
 	got = nil
-	err = LuaToGo(L, -1, &got)
+	_, err = LuaToGo(L, -1, &got)
 	if err != nil {
 		t.Error(err)
 	}
@@ -1669,7 +1671,7 @@ func TestSlice(t *testing.T) {
 
 	var i interface{}
 	want2 := []interface{}{"idx1", "idx2", "idx3"}
-	err = LuaToGo(L, -1, &i)
+	_, err = LuaToGo(L, -1, &i)
 	if err != nil {
 		t.Error(err)
 	}
@@ -1682,7 +1684,7 @@ func TestSlice(t *testing.T) {
 	mustDoString(t, L, `return `+input)
 	i = []string{"foo", "bar"}
 	want3 := []string{"idx1", "idx2", "", "idx4"}
-	err = LuaToGo(L, -1, &i)
+	_, err = LuaToGo(L, -1, &i)
 	if err != ErrTableConv {
 		t.Errorf("wrong error %q, want %q", err, ErrTableConv)
 	}
@@ -1730,7 +1732,7 @@ func TestStruct(t *testing.T) {
 	input := `{Name="foo", Ignored="baz"}`
 	mustDoString(t, L, `return `+input)
 	got := person{Name: "bar", Age: 17}
-	err := LuaToGo(L, -1, &got)
+	_, err := LuaToGo(L, -1, &got)
 	if err != nil {
 		t.Error(err)
 	}
@@ -1742,7 +1744,7 @@ func TestStruct(t *testing.T) {
 	input = `{Name="foo", Age="17yo", Ignored="baz"}`
 	mustDoString(t, L, `return `+input)
 	got = person{Name: "bar", Age: 17}
-	err = LuaToGo(L, -1, &got)
+	_, err = LuaToGo(L, -1, &got)
 	if err != ErrTableConv {
 		t.Errorf("wrong error %q, want %q", err, ErrTableConv)
 	}
@@ -1752,7 +1754,7 @@ func TestStruct(t *testing.T) {
 
 	got = person{}
 	want = person{Name: "foo", Age: 0}
-	err = LuaToGo(L, -1, &got)
+	_, err = LuaToGo(L, -1, &got)
 	if err != ErrTableConv {
 		t.Errorf("wrong error %q, want %q", err, ErrTableConv)
 	}
@@ -1780,4 +1782,49 @@ func TestUnproxify(t *testing.T) {
 
 	mustDoString(t, L, `tm = luar.unproxify(m)`)
 	runLuaTest(t, L, []luaTestData{{`tm`, `{a={1, 2}, b=luar.null, c={10, 20}, d=luar.null}`}})
+}
+
+// on a coroutine, call a Go function registerd with Luar.
+func Test100LuarCoroutinesCallingIntoGo(t *testing.T) {
+	L := Init()
+	defer L.Close()
+
+	sum := func(args []float64) float64 {
+		fmt.Printf("top of sum(). called with args='%#v'\n", args)
+		res := 0.0
+		for _, val := range args {
+			res += val
+		}
+		fmt.Printf("\n sum() computed res = '%v'\n", res)
+		return res
+	}
+
+	Register(L, "", Map{
+		"sum": sum,
+	})
+
+	mustDoString(t, L, `return coroutine.resume(coroutine.create(function() return sum{1, 10, 100} end))`)
+	top := L.GetTop()
+	if top != 2 {
+		fmt.Printf("top was %v\n", top)
+		panic("resume should have returned two values: true and 111.0")
+	}
+	got := L.ToNumber(-1)
+	if got != 111.0 {
+		panic("expected 111.0")
+	}
+
+	// coroutines nested deeper, then call
+
+	L.SetTop(0)
+	mustDoString(t, L, `return coroutine.resume(coroutine.create(function() local a={coroutine.resume(coroutine.create(function() return 2 * sum{1, 10, 100} end))}; return a[2]; end))`)
+	top = L.GetTop()
+	if top != 2 {
+		fmt.Printf("top was %v\n", top)
+		panic("resume should have returned two values: true and 222.0")
+	}
+	got = L.ToNumber(-1)
+	if got != 222.0 {
+		panic(fmt.Sprintf("expected 222.0, got: %v", got))
+	}
 }

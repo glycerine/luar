@@ -3,7 +3,9 @@ package luar
 // Those functions are meant to be registered in Lua to manipulate proxies.
 
 import (
+	"fmt"
 	"reflect"
+	"runtime/debug"
 
 	"github.com/glycerine/golua/lua"
 )
@@ -27,6 +29,7 @@ func Complex(L *lua.State) int {
 //
 // Returns: proxy (chan interface{})
 func MakeChan(L *lua.State) int {
+	fmt.Printf("jea debug: luar's MakeChan called!\n%s\n", string(debug.Stack()))
 	n := L.OptInteger(1, 0)
 	ch := make(chan interface{}, n)
 	makeValueProxy(L, reflect.ValueOf(ch), cChannelMeta)

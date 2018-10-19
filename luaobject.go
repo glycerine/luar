@@ -65,6 +65,8 @@ func NewLuaObjectFromValue(L *lua.State, val interface{}) *LuaObject {
 //
 // If 'results' is nil, results will be discarded.
 func (lo *LuaObject) Call(results interface{}, args ...interface{}) error {
+	pp("top of LuaObject.Call() ...")
+
 	L := lo.l
 	// Push the callable value.
 	lo.Push()
@@ -105,7 +107,8 @@ func (lo *LuaObject) Call(results interface{}, args ...interface{}) error {
 		if err != nil {
 			return err
 		}
-		return LuaToGo(L, -1, res.Interface())
+		_, err = LuaToGo(L, -1, res.Interface())
+		return err
 
 	case reflect.Slice:
 		residx := L.GetTop() - len(args)
@@ -128,7 +131,7 @@ func (lo *LuaObject) Call(results interface{}, args ...interface{}) error {
 		}
 
 		for i := 0; i < nresults; i++ {
-			err = LuaToGo(L, residx+i, res.Index(i).Addr().Interface())
+			_, err = LuaToGo(L, residx+i, res.Index(i).Addr().Interface())
 			if err != nil {
 				return err
 			}
@@ -151,7 +154,7 @@ func (lo *LuaObject) Call(results interface{}, args ...interface{}) error {
 		residx := L.GetTop() - nresults + 1
 
 		for i := 0; i < nresults; i++ {
-			err = LuaToGo(L, residx+i, exportedFields[i].Interface())
+			_, err = LuaToGo(L, residx+i, exportedFields[i].Interface())
 			if err != nil {
 				return err
 			}
@@ -214,7 +217,8 @@ func (lo *LuaObject) Get(a interface{}, subfields ...interface{}) error {
 		return err
 	}
 	defer lo.l.Pop(1)
-	return LuaToGo(lo.l, -1, a)
+	_, err = LuaToGo(lo.l, -1, a)
+	return err
 }
 
 // GetObject returns the LuaObject indexed at the sequence of 'subfields'.
@@ -420,13 +424,13 @@ func (ti *LuaTableIter) Next(key, value interface{}) bool {
 		}
 	}
 
-	err := LuaToGo(L, -2, key)
+	_, err := LuaToGo(L, -2, key)
 	if err != nil {
 		ti.err = err
 		return false
 	}
 	if value != nil {
-		err = LuaToGo(L, -1, value)
+		_, err = LuaToGo(L, -1, value)
 		if err != nil {
 			ti.err = err
 			return false
