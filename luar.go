@@ -343,7 +343,7 @@ func goToLuaFunction(L *lua.State, v reflect.Value) lua.LuaGoFunction {
 		if isVariadic {
 			pp("we have a variadic function!. len(argsT)=%v", len(argsT))
 			n := L.GetTop()
-			for i := len(argsT) + 1; i <= n; i++ {
+			for i := len(argsT) + 1 + receiverOffset; i <= n; i++ {
 				// jea: assumes any varargs in the actual call have been
 				// pushed onto the stack.
 
